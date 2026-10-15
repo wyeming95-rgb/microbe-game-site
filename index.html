@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0b0f1a">
+  <title>Microbe Eat &amp; Grow</title>
+  <!-- empty favicon so the browser doesn't log a 404 -->
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game" aria-label="Microbe Eat and Grow game canvas"></canvas>
+  <!-- used only to read env(safe-area-inset-*) values -->
+  <div id="safe-probe" aria-hidden="true"></div>
+  <noscript>This game needs JavaScript enabled.</noscript>
+
+  <script src="js/utils.js"></script>
+  <script src="js/fx.js"></script>
+  <script src="js/director.js"></script>
+  <script src="js/entities.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
