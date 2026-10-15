@@ -12,7 +12,19 @@
 class Director {
   constructor() {
     this.PEAK = 100;
+    this.configure();
     this.reset();
+  }
+
+  /**
+   * Per-level tuning (defaults = the original single-run feel).
+   * @param {{spawn?:number, ramp?:number, relax?:number[]}} opts
+   *   spawn = spawn-rate multiplier, ramp = difficulty growth per minute, relax = [min, max] calm seconds
+   */
+  configure(opts = {}) {
+    this.rateMult = opts.spawn || 1;
+    this.ramp = opts.ramp != null ? opts.ramp : 1;
+    this.relaxRange = opts.relax || [5, 10];
   }
 
   reset() {
@@ -27,7 +39,7 @@ class Director {
   setState(s) {
     this.state = s;
     this.stateTime = 0;
-    if (s === 'relax') this.relaxDuration = rand(5, 10);
+    if (s === 'relax') this.relaxDuration = rand(this.relaxRange[0], this.relaxRange[1]);
     if (s === 'build') {
       this.spawnTimer = 0.8;
       this.cycles++;
@@ -44,14 +56,14 @@ class Director {
 
   /** Seconds between spawn events in the current state (Infinity = none). */
   spawnInterval(runTime) {
-    const difficulty = 1 + runTime / 60 + this.cycles * 0.06;
+    const difficulty = (1 + (runTime / 60) * this.ramp + this.cycles * 0.06) * this.rateMult;
     switch (this.state) {
       case 'build': {
         const ramp = clamp(this.stateTime / 14, 0, 1);
         return lerp(1.6, 0.5, ramp) / difficulty;
       }
       case 'peak': return 0.4 / difficulty;
-      case 'boss': return 3.2;
+      case 'boss': return 3.2 / this.rateMult;
       default: return Infinity; // relax
     }
   }

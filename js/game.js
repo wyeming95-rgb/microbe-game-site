@@ -6,12 +6,10 @@
   const ctx = canvas.getContext('2d');
   const safeProbe = document.getElementById('safe-probe');
 
+  // run length, boss timing, enemy caps and multipliers come from the level (js/levels.js)
   const CFG = {
-    RUN_TIME: 75,
-    BOSS_TIME: 15,          // boss appears this many seconds before the end
     ARENA_R: 900,           // petri dish radius (world units)
     VIEW_SHORT: 520,        // world units visible across the short screen side
-    MAX_ENEMIES: 50,
     MAX_PICKUPS: 160,
     FOOD_TARGET: 90,
     MAX_BULLETS: 140,
@@ -65,6 +63,7 @@
     stateT: 0,
     realT: 0,
     time: 0,          // run time elapsed
+    lvl: Levels.get(1),
     cam: { x: 0, y: 0 },
     player: null,
     followers: [],
@@ -84,16 +83,8 @@
     foodTimer: 0,
     hurtT: 0,
     banner: null,
-    endReason: '', final: null, best: loadBest(),
-    restartRect: null, pressRestart: false,
+    endReason: '', final: null,
   };
-
-  function loadBest() {
-    try { return parseInt(localStorage.getItem('microbe-best') || '0', 10) || 0; } catch (_) { return 0; }
-  }
-  function saveBest(v) {
-    try { localStorage.setItem('microbe-best', String(v)); } catch (_) { /* private mode etc. */ }
-  }
 
   // static agar specks for the dish background
   const specks = [];
@@ -119,7 +110,7 @@
       hp: CFG.PLAYER_HP, maxHp: CFG.PLAYER_HP,
       flash: 0, iframes: 0, dead: false,
       face: { x: 1, y: 0 },
-      speedMult: 1, dmgMult: 1, magnet: CFG.PLAYER_MAGNET,
+      speedMult: 1, dmgMult: 1, magnet: CFG.PLAYER_MAGNET, xpMult: 1,
       splitLvl: 0, shotT: 0.5, regen: 0, regenT: 0,
     };
   }
@@ -128,7 +119,8 @@
     return Math.round(4 + level * 2.5 + level * level * 0.25);
   }
 
-  function startRun() {
+  function startRun(levelId = game.lvl.id) {
+    const lvl = game.lvl = Levels.get(levelId);
     game.state = 'playing';
     game.stateT = 0;
     game.time = 0;
@@ -156,19 +148,19 @@
       food: new ShuffleBag(['food', 'food', 'food', 'food', 'food', 'food', 'food', 'feast', 'feast', 'sugar']),
       drop: new ShuffleBag(['xp', 'xp', 'xp', 'xp', 'xp', 'xp2', 'xp2', 'heal']),
       skill: new ShuffleBag(Object.keys(SKILLS)),
-      enemy: [
-        new ShuffleBag(['wbc', 'wbc', 'wbc', 'wbc', 'dart']),
-        new ShuffleBag(['wbc', 'wbc', 'wbc', 'dart', 'dart', 'macro']),
-        new ShuffleBag(['wbc', 'wbc', 'dart', 'dart', 'macro', 'macro']),
-      ],
+      // one enemy bag per stage of the level: [startSecond, bag]
+      enemy: lvl.mix.map(([at, items]) => [at, new ShuffleBag(items)]),
     };
+    director.configure(lvl);
     director.reset();
-    hpBar.reset(CFG.PLAYER_HP);
     shake.reset();
     dmgNums.clear();
     particles.clear();
+    // permanent upgrades (DNA shop)
+    Upgrades.applyAll(game.player, api);
+    hpBar.reset(game.player.maxHp);
     for (let i = 0; i < 55; i++) spawnFood();
-    showBanner('EAT & GROW', 'Survive 75 seconds', '#5ef0d0');
+    showBanner('LEVEL ' + lvl.id, Levels.objective(lvl), '#5ef0d0', 2.4);
   }
 
   function showBanner(text, sub, color = '#ffffff', dur = 2) {
@@ -259,18 +251,23 @@
 
   // block browser gestures: scrolling, pinch/double-tap zoom, context menu
   const block = e => e.preventDefault();
-  document.addEventListener('touchmove', block, { passive: false });
+  // ...except vertical scrolling inside menu screens (marked .scroll)
+  document.addEventListener('touchmove', e => {
+    if (e.touches.length === 1 && e.target.closest && e.target.closest('.scroll')) return;
+    e.preventDefault();
+  }, { passive: false });
   document.addEventListener('gesturestart', block, { passive: false });
   document.addEventListener('dblclick', block, { passive: false });
   document.addEventListener('contextmenu', block);
 
   window.addEventListener('keydown', e => {
+    // menus (js/menu.js) handle keys on the title and results screens; leave form fields alone
+    if (e.target && e.target.closest && e.target.closest('input, textarea')) return;
+    if (game.state === 'title' || game.state === 'over') return;
     const k = e.key.toLowerCase();
     if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
     input.keys.add(k);
-    if (game.state === 'title' && (k === 'enter' || k === ' ')) startRun();
-    else if (game.state === 'over' && game.stateT > 0.6 && (k === 'enter' || k === ' ' || k === 'r')) startRun();
-    else if (game.state === 'levelup' && game.offerT > 0.35 && ['1', '2', '3'].includes(k)) {
+    if (game.state === 'levelup' && game.offerT > 0.35 && ['1', '2', '3'].includes(k)) {
       const i = parseInt(k, 10) - 1;
       if (i < game.offer.length) chooseSkill(i);
     }
@@ -280,19 +277,13 @@
 
   function onTapDown(x, y) {
     if (game.state === 'levelup') game.pressCard = cardAt(x, y);
-    else if (game.state === 'over') game.pressRestart = inRect(x, y, game.restartRect);
   }
 
   function onTapUp(x, y) {
-    if (game.state === 'title' && game.stateT > 0.3) {
-      startRun();
-    } else if (game.state === 'levelup') {
+    if (game.state === 'levelup') {
       const i = cardAt(x, y);
       if (game.offerT > 0.35 && i >= 0 && i === game.pressCard) chooseSkill(i);
       game.pressCard = -1;
-    } else if (game.state === 'over') {
-      if (game.stateT > 0.6 && game.pressRestart && inRect(x, y, game.restartRect)) startRun();
-      game.pressRestart = false;
     }
   }
 
@@ -378,10 +369,13 @@
 
   function makeEnemy(type, x, y) {
     const def = ENEMY_TYPES[type];
-    const hp = type === 'boss' ? def.hp : def.hp * (1 + game.time / 60);
+    const lvl = game.lvl;
+    const isBoss = type === 'boss';
+    const hp = isBoss ? def.hp : def.hp * (1 + game.time / 60) * lvl.hp;
     return {
       type, def, x, y, vx: 0, vy: 0, r: def.r,
-      hp, maxHp: hp, speed: def.speed * rand(0.9, 1.1), mass: def.mass,
+      hp, maxHp: hp, speed: def.speed * rand(0.9, 1.1) * (isBoss ? 1 : lvl.speed), mass: def.mass,
+      dmgMult: isBoss ? lvl.boss.dmg : lvl.dmg,
       flash: 0, bodyCd: 0, seed: rand(0, 100), ang: 0, dead: false, t: 0,
       // dart state
       mode: 'approach', timer: 0, aimTime: 0.6, aimDelay: 0,
@@ -391,12 +385,14 @@
   }
 
   function currentEnemyBag() {
-    const t = game.time;
-    return game.bags.enemy[t < 15 ? 0 : t < 35 ? 1 : 2];
+    const stages = game.bags.enemy;
+    let bag = stages[0][1];
+    for (const [at, b] of stages) if (game.time >= at) bag = b;
+    return bag;
   }
 
   function spawnEnemyEvent() {
-    const room = CFG.MAX_ENEMIES - game.enemies.length;
+    const room = game.lvl.maxEnemies - game.enemies.length;
     if (room <= 0) return;
     const type = currentEnemyBag().next();
     const pt = offscreenPoint();
@@ -404,7 +400,7 @@
       // a squad lined up behind each other; they dash one after another
       const p = game.player;
       const a = Math.atan2(p.y - pt.y, p.x - pt.x);
-      const count = Math.min(room, game.time > 30 ? 4 : 3);
+      const count = Math.min(room, game.lvl.squad[game.time > 30 ? 1 : 0]);
       for (let i = 0; i < count; i++) {
         const e = makeEnemy('dart', pt.x - Math.cos(a) * i * 34, pt.y - Math.sin(a) * i * 34);
         e.aimDelay = i * 0.35;
@@ -423,7 +419,7 @@
     game.bossSpawned = true;
     const pt = offscreenPoint(60);
     const b = makeEnemy('boss', pt.x, pt.y);
-    b.hp = b.maxHp = Math.round(600 + game.level * 85 + game.followers.length * 35 + p.splitLvl * 100);
+    b.hp = b.maxHp = Math.round((600 + game.level * 85 + game.followers.length * 35 + p.splitLvl * 100) * game.lvl.boss.hp);
     b.r = ENEMY_TYPES.boss.r;
     keepInDish(b);
     game.enemies.push(b);
@@ -506,6 +502,8 @@
       game.boss = null;
       shake.add(1);
       endRun('boss');
+    } else if (game.lvl.goal === 'kills' && game.kills >= game.lvl.kills) {
+      endRun('kills');
     }
   }
 
@@ -531,7 +529,7 @@
 
   // ------------------------------------------------------------ progression
   function addXp(n) {
-    game.xp += n;
+    game.xp += n * game.player.xpMult;
     while (game.xp >= game.xpNext) {
       game.xp -= game.xpNext;
       game.level++;
@@ -572,15 +570,22 @@
     game.state = 'ending';
     game.stateT = 0;
     game.endReason = reason;
+    const lvl = game.lvl;
+    // dead / 'timeout' (time ran out on a boss or kills level) lose; everything else wins
+    const won = reason === 'time' || reason === 'boss' || reason === 'kills';
     let bonus = 0;
-    if (reason === 'time') bonus = 1000;
-    if (reason === 'boss') bonus = 1000 + Math.round(Math.max(0, CFG.RUN_TIME - game.time) * 100);
+    if (won) bonus = 1000 + Math.round(Math.max(0, lvl.time - game.time) * 100);
     game.score += bonus;
-    const isBest = game.score > game.best;
-    if (isBest) { game.best = game.score; saveBest(game.best); }
+    const stars = Levels.stars(lvl, game.score, won);
+    const saved = GameStorage.saveLevelResult(lvl.id, { score: game.score, stars, won });
+    const dna = Levels.dnaReward(lvl, { score: game.score, kills: game.kills, won, firstClear: saved.firstClear });
+    GameStorage.addDNA(dna);
     game.final = {
+      levelId: lvl.id, reason, won, stars, dna,
       score: game.score, bonus, level: game.level, kills: game.kills,
-      time: Math.min(game.time, CFG.RUN_TIME), isBest,
+      time: Math.min(game.time, lvl.time),
+      isBest: saved.isBest, best: GameStorage.getLevelResult(lvl.id).best,
+      firstClear: saved.firstClear, unlockedNext: saved.unlockedNext,
     };
   }
 
@@ -613,7 +618,11 @@
         break;
       case 'ending':
         updateWorld(dt * 0.3, false); // slow-mo finish
-        if (game.stateT >= 1.3) { game.state = 'over'; game.stateT = 0; }
+        if (game.stateT >= 1.3) {
+          game.state = 'over';
+          game.stateT = 0;
+          if (MicrobeGame.onRunEnd) MicrobeGame.onRunEnd(game.final);
+        }
         break;
       case 'over':
         particles.update(dt);
@@ -626,7 +635,7 @@
     const p = game.player;
     if (live) {
       game.time += dt;
-      if (!game.bossSpawned && game.time >= CFG.RUN_TIME - CFG.BOSS_TIME) spawnBoss();
+      if (!game.bossSpawned && game.lvl.bossAt != null && game.time >= game.lvl.bossAt) spawnBoss();
     }
 
     updatePlayer(dt, live);
@@ -670,7 +679,7 @@
     compact(game.ebullets, b => !b.dead);
     compact(game.waves, w => w.r < w.maxR);
 
-    if (live && game.time >= CFG.RUN_TIME) endRun('time');
+    if (live && game.time >= game.lvl.time) endRun(game.lvl.goal === 'survive' ? 'time' : 'timeout');
   }
 
   function updatePlayer(dt, live) {
@@ -788,7 +797,7 @@
         const rr = e.r + p.r;
         const d2 = dist2(e.x, e.y, p.x, p.y);
         if (d2 < rr * rr) {
-          hurtPlayer(e.def.dmg * (e.mode === 'dash' ? 1.3 : 1), e);
+          hurtPlayer(e.def.dmg * e.dmgMult * (e.mode === 'dash' ? 1.3 : 1), e);
           if (e.bodyCd <= 0) {
             damageEnemy(e, CFG.BODY_DMG * p.dmgMult, p.x, p.y, 140);
             e.bodyCd = 0.45;
@@ -844,7 +853,7 @@
       b.tele -= dt;
       b.vx *= 0.9; b.vy *= 0.9;
       if (b.tele <= 0) {
-        game.waves.push({ x: b.x, y: b.y, r: b.r, maxR: b.r + 380, speed: 400, hit: false });
+        game.waves.push({ x: b.x, y: b.y, r: b.r, maxR: b.r + 380, speed: 400, hit: false, dmg: 18 * b.dmgMult });
         shake.add(0.4);
         particles.burst(b.x, b.y, '#ff8ab8', 20, 300, 4, 0.5);
       }
@@ -853,12 +862,12 @@
     b.atkT -= dt;
     if (b.atkT > 0) return;
     const enraged = b.hp < b.maxHp * 0.5;
-    b.atkT = enraged ? 1.9 : 2.7;
+    b.atkT = (enraged ? 1.9 : 2.7) / game.lvl.boss.atk;
     const atk = ['pulse', 'spawn', 'spores'][b.atkIdx++ % 3];
     if (atk === 'pulse') {
       b.tele = b.teleTime;
     } else if (atk === 'spawn') {
-      const n = Math.min(enraged ? 6 : 4, CFG.MAX_ENEMIES - game.enemies.length);
+      const n = Math.min(enraged ? 6 : 4, game.lvl.maxEnemies - game.enemies.length);
       for (let i = 0; i < n; i++) {
         const a = (i / Math.max(1, n)) * TAU + rand(-0.2, 0.2);
         const m = makeEnemy('minion', b.x + Math.cos(a) * (b.r + 14), b.y + Math.sin(a) * (b.r + 14));
@@ -869,7 +878,7 @@
     } else {
       const n = enraged ? 18 : 12;
       const off = rand(0, TAU);
-      for (let i = 0; i < n; i++) fireEnemyBullet(b.x, b.y, off + (i / n) * TAU, 170, 9);
+      for (let i = 0; i < n; i++) fireEnemyBullet(b.x, b.y, off + (i / n) * TAU, 170, 9 * b.dmgMult);
       shake.add(0.15);
     }
   }
@@ -950,7 +959,7 @@
         const d = Math.hypot(p.x - w.x, p.y - w.y);
         if (Math.abs(d - w.r) < p.r + 10) {
           w.hit = true;
-          hurtPlayer(18, w);
+          hurtPlayer(w.dmg, w);
         }
       }
     }
@@ -1010,11 +1019,18 @@
     else drawWorld(view);
     ctx.restore();
 
-    if (title) { drawTitleUI(); return; }
+    if (title) { // the HTML home/menus sit on top of this
+      ctx.fillStyle = 'rgba(4,6,14,0.35)';
+      ctx.fillRect(0, 0, W, H);
+      return;
+    }
     drawVignette();
     drawHUD();
     if (game.state === 'levelup') drawLevelUp();
-    if (game.state === 'over') drawGameOver();
+    if (game.state === 'over') { // results panel is HTML (js/menu.js)
+      ctx.fillStyle = `rgba(4,6,14,${0.6 * clamp(game.stateT / 0.4, 0, 1)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
   }
 
   function inView(v, x, y, r) {
@@ -1142,8 +1158,8 @@
     const y0 = safeTop + 10;
 
     // timer (top centre)
-    const remain = CFG.RUN_TIME - game.time;
-    const bossTime = remain <= CFG.BOSS_TIME;
+    const remain = game.lvl.time - game.time;
+    const bossTime = game.bossSpawned || remain <= 10;
     const tSize = bossTime ? 28 + 2 * Math.max(0, Math.sin(game.realT * 8)) : 26;
     text(fmtTime(remain), W / 2, y0 + 14, tSize, bossTime ? '#ff7aa8' : '#ffffff', 'center', 800);
 
@@ -1167,7 +1183,8 @@
 
     // score + kills (top right)
     text(String(game.score), W - pad, y0 + 9, 16, '#ffe066', 'right', 800);
-    text(game.kills + ' kills', W - pad, y0 + 27, 11, '#b8c4e0', 'right', 600);
+    if (game.lvl.goal === 'kills') text(`${game.kills} / ${game.lvl.kills} kills`, W - pad, y0 + 27, 12, '#ffd84d', 'right', 800);
+    else text(game.kills + ' kills', W - pad, y0 + 27, 11, '#b8c4e0', 'right', 600);
 
     // player health bar
     const hw = Math.min(W - pad * 2, 360);
@@ -1348,81 +1365,6 @@
     ctx.lineCap = 'butt';
   }
 
-  function drawGameOver() {
-    const f = game.final;
-    const k = clamp(game.stateT / 0.4, 0, 1);
-    ctx.fillStyle = `rgba(4,6,14,${0.72 * k})`;
-    ctx.fillRect(0, 0, W, H);
-    if (!f) return;
-    const s = easeOutBack(k);
-    const pw = Math.min(W - 36, 360), ph = 330;
-    const px = (W - pw) / 2, py = Math.max(safeTop + 20, (H - ph) / 2);
-    ctx.save();
-    ctx.translate(W / 2, py + ph / 2);
-    ctx.scale(s, s);
-    ctx.translate(-W / 2, -(py + ph / 2));
-    ctx.fillStyle = '#121a31';
-    roundRect(ctx, px, py, pw, ph, 18); ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = 'rgba(160,220,255,0.35)';
-    ctx.stroke();
-
-    const titles = {
-      dead: ['CONSUMED', '#ff5a6a'],
-      time: ['SURVIVED!', '#5ef0d0'],
-      boss: ['QUEEN DEFEATED!', '#ffe066'],
-    };
-    const [tt, tc] = titles[game.endReason] || titles.time;
-    text(tt, W / 2, py + 38, fitSize(tt, pw - 30, 30, 900), tc, 'center', 900);
-    text('SCORE', W / 2, py + 78, 12, '#8d9bc0', 'center', 700, false);
-    text(String(f.score), W / 2, py + 108, 40, '#ffffff', 'center', 900);
-    if (f.isBest) text('NEW BEST!', W / 2, py + 138, 12, '#ffe066', 'center', 800, false);
-    else text('Best ' + game.best, W / 2, py + 138, 12, '#8d9bc0', 'center', 600, false);
-
-    const rows = [
-      ['Level', String(f.level)],
-      ['Kills', String(f.kills)],
-      ['Time', f.time.toFixed(1) + 's'],
-    ];
-    if (f.bonus) rows.push(['Survival bonus', '+' + f.bonus]);
-    rows.forEach(([a, b], i) => {
-      const y = py + 168 + i * 24;
-      text(a, px + 30, y, 15, '#b8c4e0', 'left', 600, false);
-      text(b, px + pw - 30, y, 15, '#ffffff', 'right', 800, false);
-    });
-
-    const bw = Math.min(pw - 60, 220), bh = 50;
-    const r = { x: W / 2 - bw / 2, y: py + ph - bh - 20, w: bw, h: bh };
-    game.restartRect = r;
-    const pressed = game.pressRestart && input.down;
-    ctx.fillStyle = pressed ? '#2fbf98' : '#3fe8b8';
-    roundRect(ctx, r.x, r.y, r.w, r.h, 25); ctx.fill();
-    text('RESTART', W / 2, r.y + r.h / 2 + 1, 18, '#06241c', 'center', 900, false);
-    ctx.restore();
-  }
-
-  function drawTitleUI() {
-    ctx.fillStyle = 'rgba(4,6,14,0.35)';
-    ctx.fillRect(0, 0, W, H);
-    const cy = H * 0.3;
-    const bob = Math.sin(game.realT * 2) * 4;
-    const size = Math.min(54, W / 7.5);
-    text('MICROBE', W / 2, cy - size * 0.55 + bob, size, '#5ef0d0', 'center', 900);
-    text('EAT & GROW', W / 2, cy + size * 0.55 + bob, size * 0.72, '#ffffff', 'center', 900);
-
-    const tap = 0.55 + 0.45 * Math.sin(game.realT * 4);
-    ctx.globalAlpha = tap;
-    text('TAP TO START', W / 2, H * 0.68, 20, '#ffe066', 'center', 800);
-    ctx.globalAlpha = 1;
-    const lines = [
-      'Drag anywhere to swim (mouse: point / hold)',
-      'Eat food, kill cells, level up, grow a swarm',
-      'Survive 75s — the Queen arrives at the end',
-    ];
-    lines.forEach((l, i) => text(l, W / 2, H * 0.68 + 36 + i * 20, fitSize(l, W - 30, 13, 500), '#b8c4e0', 'center', 500, false));
-    if (game.best) text('Best ' + game.best, W / 2, H - safeBottom - 24, 13, '#8d9bc0', 'center', 600, false);
-  }
-
   // ------------------------------------------------------------ main loop
   let last = performance.now();
   function frame(now) {
@@ -1435,6 +1377,25 @@
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+
+  // public API used by the HTML menus (js/menu.js)
+  const MicrobeGame = window.MicrobeGame = {
+    /** Start (or restart) a level. */
+    startLevel(id) {
+      input.keys.clear(); input.down = false; input.id = null;
+      startRun(id);
+    },
+    /** Back to the idle title backdrop. */
+    goHome() {
+      game.state = 'title';
+      game.stateT = 0;
+      game.banner = null;
+    },
+    get state() { return game.state; },
+    get levelId() { return game.lvl.id; },
+    /** Set by the menu: called with game.final when the results should show. */
+    onRunEnd: null,
+  };
 
   // debug hook (handy from the console): window.__microbe.game
   window.__microbe = { game, CFG, director, startRun, chooseSkill };

@@ -18,10 +18,93 @@
   <div id="safe-probe" aria-hidden="true"></div>
   <noscript>This game needs JavaScript enabled.</noscript>
 
+  <!-- menus (driven by js/menu.js); the canvas keeps animating behind them -->
+  <div id="ui">
+    <section id="screen-home" class="screen scroll" hidden>
+      <header class="home-head">
+        <h1 class="title"><span class="t1">MICROBE</span><span class="t2">EAT &amp; GROW</span></h1>
+        <div class="version">v2 · levels &amp; upgrades</div>
+      </header>
+
+      <div id="profile-card" class="card profile" hidden>
+        <div class="profile-who">
+          <span class="muted">Player</span>
+          <strong id="profile-name"></strong>
+        </div>
+        <div class="dna-chip"><span class="dna-icon" aria-hidden="true">🧬</span><span id="home-dna">0</span> DNA</div>
+        <button id="btn-edit-profile" class="link" type="button">Edit</button>
+      </div>
+
+      <form id="signup-form" class="card form" novalidate hidden>
+        <h2 id="signup-title">Sign up</h2>
+        <label for="signup-name">Player name</label>
+        <input id="signup-name" name="name" type="text" maxlength="16" required autocomplete="nickname" placeholder="e.g. Amoeba42">
+        <label for="signup-email">Email <span class="muted">(optional)</span></label>
+        <input id="signup-email" name="email" type="email" maxlength="120" autocomplete="email" inputmode="email" placeholder="you@example.com">
+        <div id="signup-error" class="error" role="alert"></div>
+        <button id="btn-signup" class="btn primary" type="submit">Sign up</button>
+      </form>
+
+      <nav class="menu">
+        <button id="btn-play" class="btn primary big" type="button">
+          <span>Play</span><small id="play-sub">Level 1</small>
+        </button>
+        <div class="row">
+          <button id="btn-levels" class="btn" type="button">Levels</button>
+          <button id="btn-upgrades" class="btn" type="button">Upgrades</button>
+        </div>
+      </nav>
+
+      <p class="note">Progress is saved on this device.</p>
+    </section>
+
+    <section id="screen-levels" class="screen scroll" hidden>
+      <header class="bar">
+        <button id="btn-back-levels" class="btn back" type="button" aria-label="Back">‹ Back</button>
+        <h2>Levels</h2>
+        <div class="dna-chip small"><span aria-hidden="true">🧬</span><span class="dna-val">0</span></div>
+      </header>
+      <div id="level-grid" class="level-grid"></div>
+    </section>
+
+    <section id="screen-upgrades" class="screen scroll" hidden>
+      <header class="bar">
+        <button id="btn-back-upgrades" class="btn back" type="button" aria-label="Back">‹ Back</button>
+        <h2>Upgrades</h2>
+        <div class="dna-chip small"><span aria-hidden="true">🧬</span><span class="dna-val">0</span></div>
+      </header>
+      <p class="hint">Permanent boosts, applied at the start of every run.</p>
+      <div id="upgrade-list" class="upgrade-list"></div>
+    </section>
+
+    <section id="screen-results" class="screen scroll" hidden>
+      <div class="card results">
+        <div id="res-level" class="muted"></div>
+        <h2 id="res-title">Results</h2>
+        <div id="res-stars" class="stars big" aria-label="stars"></div>
+        <div class="res-score-label muted">SCORE</div>
+        <div id="res-score" class="res-score">0</div>
+        <div id="res-best" class="res-best"></div>
+        <dl id="res-rows" class="res-rows"></dl>
+        <div class="res-dna">+<span id="res-dna">0</span> DNA <span aria-hidden="true">🧬</span></div>
+        <div id="res-unlock" class="res-unlock" hidden></div>
+        <div class="res-buttons">
+          <button id="btn-results-home" class="btn" type="button">Home</button>
+          <button id="btn-retry" class="btn" type="button">Retry</button>
+          <button id="btn-next" class="btn primary" type="button">Next</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
   <script src="js/utils.js"></script>
   <script src="js/fx.js"></script>
   <script src="js/director.js"></script>
   <script src="js/entities.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/levels.js"></script>
+  <script src="js/upgrades.js"></script>
   <script src="js/game.js"></script>
+  <script src="js/menu.js"></script>
 </body>
 </html>
